@@ -1,0 +1,23 @@
+Package: bayesianMTE
+Title: Bayesian Estimation of Marginal Treatment Effects
+Version: 0.0.0.9000
+Authors@R: 
+    c(person("Isaac", "Opper", email="iopper@rand.org", role = c("aut", "cre")), 
+    person("Aarya", "Suryavanshi", email="asuryava@rand.org", role = c("ctb")))
+Description: Bayesian estimation of marginal treatment effects, the overall
+    average treatment effect, always taker average treatment effect,
+    Never taker average treatment effect and local average treatment effect.
+    Estimation is done using a Gaussian process prior with the option to
+    integrate over the hyperprarmeters or to use an empirical Bayes approach.
+License: `use_mit_license()`, `use_gpl3_license()` or friends to pick a
+    license
+Encoding: UTF-8
+Roxygen: list(markdown = TRUE)
+RoxygenNote: 7.2.0
+Suggests: 
+    knitr,
+    rmarkdown
+VignetteBuilder: knitr
+Imports: 
+    matrixStats, stats, magrittr, mvtnorm, ggplot2, tibble, dplyr, collapse, plgp, patchwork, methods
+
