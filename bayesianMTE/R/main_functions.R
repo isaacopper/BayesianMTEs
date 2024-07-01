@@ -9,6 +9,7 @@
 #' @import plgp
 #' @import ggplot2
 #' @import methods
+#' @import patchwork
 
 
 
@@ -173,10 +174,35 @@ log_m_likelihood <- function(hyperparams, data, eta, ml_only = TRUE, log_prior =
 ##############################################################
 # Plot some stuff
 ##############################################################
-plot_potential_functions <- function(mu, sigma, n = 10) {
+plot_potential_functions <- function(mu, sigma, n = 10, poly_kernel = FALSE, poly_degree = 3) {
 
-  Y <- mvtnorm::rmvnorm(n, mean = mu, sigma = sigma + diag(1*eps, nrow(mu)))
-
+  # If poly_kernel == FALSE, can just simulate the data via the sigma matrix
+  if (poly_kernel == FALSE) {
+    Y <- mvtnorm::rmvnorm(n, mean = mu, sigma = sigma + diag(1*eps, nrow(mu)))
+  }
+  
+  # If poly_kernel == TRUE, then sigma is low rank and so need to 
+  # account for that
+  if (poly_kernel == TRUE) {
+    # Do an eigendecomposition and split out eigen vectors vs values
+    max_component <- poly_degree*2 + 2
+    eigen_decomp <- eigen(sigma)
+    eigenvalues <- eigen_decomp$values[1:max_component]
+    eigenvectors <- eigen_decomp$vectors[,1:max_component]
+    
+    # Draw random variables
+    Y <- matrix(rnorm(n * dim(eigenvectors)[2]), ncol = dim(eigenvectors)[2]) %*% diag(sqrt(eigenvalues)) %*% t(eigenvectors)
+  
+    # Make mean matrix to same dimensions as Y
+    adj_mu <- mu
+    for (i in seq(1, n-1)) {
+      adj_mu <- cbind(mu, adj_mu)
+    }
+    
+    # Add mean
+    Y <- Y + t(adj_mu)
+  }
+  
   # Save results
   top_n = ncol(Y)/2
   random_functions <- data.frame(
@@ -209,29 +235,56 @@ plot_potential_functions <- function(mu, sigma, n = 10) {
   return(p)
 }
 
+##############################################################
+# Calculate a Polynomial Kernel
+##############################################################
+poly_kernel <- function(hyperparams, degree, eta) {
+  # Create Polynomial Matrices (with Intercept)
+  a <- poly(eta$eta - .5, degree = degree, raw = TRUE)
+  a <- cbind(1, a)
+  
+  # Penalty Matrix
+  pen <- diag(hyperparams)
+  
+  # Kernel
+  kernel <- a %*% pen %*% t(a)
+  
+  # Return
+  return(kernel)
+  
+}
+
+
+# ##############################################################
+# # From Hypers to Squared Exponential Covariate
+# ##############################################################
+# squared_exponential <- function(hyperparams, eta) {
+#   # From Vector of hyperparams to specific values
+#   if (length(hyperparams) == 4) {
+#     std_mu = exp(hyperparams[1])
+#     lengthscale_mu = exp(hyperparams[2])
+#     std_tau = exp(hyperparams[3])
+#     lengthscale_tau = exp(hyperparams[4])
+#   }
+#   if (length(hyperparams) == 2) {
+#     std_mu = exp(hyperparams[1])
+#     lengthscale_mu = exp(hyperparams[2])
+#     std_tau = exp(hyperparams[1])
+#     lengthscale_tau = exp(hyperparams[2])
+#   }
+#   
+#   # Create base kernels based on the hyperparams
+#   Sigma_mu <- (std_mu)^2*exp(-distance(eta$eta)/(2*lengthscale_mu^2))
+#   Sigma_tau <- (std_tau)^2*exp(-distance(eta$eta)/(2*lengthscale_tau^2))
+#   
+#   # Return
+#   return(c("Sigma_mu" = Sigma_mu, "Sigma_tau" = Sigma_tau))
+# }
 
 ##############################################################
 # Bayesian MTE -- Subroutine
 ##############################################################
-bayesian_mte_sub <- function(hyperparams, merged, eta, c_data, grid_length, frequentist_uncertainty = FALSE)  {
-
-  # From Vector of hyperparams to specific values
-  if (length(hyperparams) == 4) {
-    std_mu = exp(hyperparams[1])
-    lengthscale_mu = exp(hyperparams[2])
-    std_tau = exp(hyperparams[3])
-    lengthscale_tau = exp(hyperparams[4])
-  }
-  if (length(hyperparams) == 2) {
-    std_mu = exp(hyperparams[1])
-    lengthscale_mu = exp(hyperparams[2])
-    std_tau = exp(hyperparams[1])
-    lengthscale_tau = exp(hyperparams[2])
-  }
-
-  # Create base kernels based on the hyperparams
-  Sigma_mu <- (std_mu)^2*exp(-distance(eta$eta)/(2*lengthscale_mu^2))
-  Sigma_tau <- (std_tau)^2*exp(-distance(eta$eta)/(2*lengthscale_tau^2))
+bayesian_mte_sub <- function(Sigma_mu, Sigma_tau, merged, eta, c_data, grid_length, frequentist_uncertainty = FALSE)  {
 
   # Transform kernels
   m_covs <- transform_kernel(Sigma_mu, Sigma_tau)
@@ -300,6 +353,8 @@ bayesian_mte_sub <- function(hyperparams, merged, eta, c_data, grid_length, freq
 #' @param hyperparameter_draws is number of draws from the hyper-prior distribution; default is 10,000.
 #' @param extrapolation_uncertainty determines whether the observed moments are assumed to be estimated without error (if TRUE) or with error (if FALSE);  default is FALSE.
 #' @param frequentist_uncertainty determines whether the reported standard deviations are the standard errors of the MAP (if TRUE) or the posterior standard deviation (if FALSE);  default is FALSE.
+#' @param poly_kernel determines whether to use a polynomial kernel (if TRUE) as opposed a squared-exponential kernel (if FALSE). Default is FALSE, i.e., to use a squared expoential. If using a polynomial kernel, you need to specify an input_hypers of size degree + 1, which specify the prior variance of each coefficient on the polynomials, starting with the constant term and cannot specify full_bayes == TRUE.
+#' @param poly_degree determines the degree of the polynomial to use if specifying a polynomial kernel. Default is 3.
 #' @return ATE is the posterior mean (ATE$mean) and variance (ATE$variance) of the average treatment effect
 #' @return LATE, ATATE, NTATE are identical to ATE, but for the local average treatment effect (LATE), always taker average treatment effect (ATATE), and never taker average treatment effect (NTATE)
 #' @return prior_plot, posterior_plot are plots showing 10 random functions generated according to the estimated hyperparameter. Prior plot does not condition on the observed moments, while posterior plot does. Only returned when full_bayes == FALSE.
@@ -309,7 +364,7 @@ bayesian_mte_sub <- function(hyperparams, merged, eta, c_data, grid_length, freq
 #' @return posteriors_and_priors is a graph showing the prior and posterior distribution of the hyperparameters. Only returned when full_bayes == TRUE.
 #' @return number_of_hypers_used is the number of hyperparameters that are "accepted" by the accept/reject algorithm. Only returned when full_bayes == TRUE.
 #' @export
-bayesian_mte <- function(outcome, treatment_choice, treatment_assignment, grid_length = .01, demean = FALSE, full_bayes = TRUE, input_hypers = NULL, log_prior = NULL, hyperparameter_draws = 10000, extrapolation_uncertainty = FALSE, frequentist_uncertainty = FALSE) {
+bayesian_mte <- function(outcome, treatment_choice, treatment_assignment, grid_length = .01, demean = FALSE, full_bayes = TRUE, input_hypers = NULL, log_prior = NULL, hyperparameter_draws = 10000, extrapolation_uncertainty = FALSE, frequentist_uncertainty = FALSE, poly_kernel = FALSE, poly_degree = 3) {
 
   ##############################################################
   # Error Checks
@@ -432,37 +487,47 @@ bayesian_mte <- function(outcome, treatment_choice, treatment_assignment, grid_l
   ##############################################################
   if (full_bayes == FALSE) {
     ##############################################################
-    # Estimate Hyperparameters
+    # If needed, estimated hyperparameters
     ##############################################################
     if (missing(input_hypers)) {
-      #ml_hyper <- stats::optim(c(0,0,0,0), log_m_likelihood, gr = NULL, merged, eta, log_prior = log_prior, control = list(fnscale = -1))
       ml_hyper <- stats::optim(c(0,0), log_m_likelihood, gr = NULL, merged, eta, log_prior = log_prior, control = list(fnscale = -1))
       ml_hyper <- ml_hyper$par
     }
     else {
       ml_hyper = input_hypers
     }
+    
+    ##############################################################
+    # Create Kernels
+    ##############################################################
+    if (poly_kernel == FALSE) {
+      # From Vector of hyperparams to specific values
+      if (length(ml_hyper) == 4) {
+        std_mu = exp(ml_hyper[1])
+        lengthscale_mu = exp(ml_hyper[2])
+        std_tau = exp(ml_hyper[3])
+        lengthscale_tau = exp(ml_hyper[4])
+      }
+      if (length(ml_hyper) == 2) {
+        std_mu = exp(ml_hyper[1])
+        lengthscale_mu = exp(ml_hyper[2])
+        std_tau = exp(ml_hyper[1])
+        lengthscale_tau = exp(ml_hyper[2])
+      }
+
+      # Create base kernels based on the hyperparams
+      Sigma_mu <- (std_mu)^2*exp(-distance(eta$eta)/(2*lengthscale_mu^2))
+      Sigma_tau <- (std_tau)^2*exp(-distance(eta$eta)/(2*lengthscale_tau^2))
+    }
+    if (poly_kernel == TRUE) {
+      Sigmas <- poly_kernel(ml_hyper, degree = poly_degree, eta)
+      Sigma_mu <- Sigmas
+      Sigma_tau <- Sigmas
+    }
+
     ##############################################################
     # Bayesian MTE -- Subroutine
     ##############################################################
-    # From Vector of hyperparams to specific values
-    if (length(ml_hyper) == 4) {
-      std_mu = exp(ml_hyper[1])
-      lengthscale_mu = exp(ml_hyper[2])
-      std_tau = exp(ml_hyper[3])
-      lengthscale_tau = exp(ml_hyper[4])
-    }
-    if (length(ml_hyper) == 2) {
-      std_mu = exp(ml_hyper[1])
-      lengthscale_mu = exp(ml_hyper[2])
-      std_tau = exp(ml_hyper[1])
-      lengthscale_tau = exp(ml_hyper[2])
-    }
-
-    # Create base kernels based on the hyperparams
-    Sigma_mu <- (std_mu)^2*exp(-distance(eta$eta)/(2*lengthscale_mu^2))
-    Sigma_tau <- (std_tau)^2*exp(-distance(eta$eta)/(2*lengthscale_tau^2))
-
     # Transform kernels
     m_covs <- transform_kernel(Sigma_mu, Sigma_tau)
     m_0 <- m_covs$m_0 + diag(eps, ncol(m_covs$m_0))
@@ -473,16 +538,16 @@ bayesian_mte <- function(outcome, treatment_choice, treatment_assignment, grid_l
     Sigma <- cbind(rbind(m_0, m_01), rbind(t(m_01), m_1))
 
     # Plot potential prior functions
-    prior_plot <- plot_potential_functions(matrix(0, nrow = nrow(Sigma)), Sigma)
-
+    prior_plot <- plot_potential_functions(matrix(0, nrow = nrow(Sigma)), Sigma, poly_kernel = poly_kernel, poly_degree = poly_degree)
+    
     # Posterior predictions about m
     posterior_m <- posterior_predictions(merged$mean, merged$var, Sigma, matrix(merged$row_n), eta, frequentist_uncertainty_only = frequentist_uncertainty)
     mu_hat <- posterior_m$mu_hat
     Sigma_hat <- posterior_m$Sigma_hat
 
     # Plot potential posterior functions
-    posterior_plot <- plot_potential_functions(mu_hat, Sigma_hat)
-
+    posterior_plot <- plot_potential_functions(mu_hat, Sigma_hat, poly_kernel = poly_kernel, poly_degree = poly_degree)
+    
     # Plot Observed Moments & Predictions
     # Make predictions dataframe
     predictions <- data.frame(
@@ -508,16 +573,6 @@ bayesian_mte <- function(outcome, treatment_choice, treatment_assignment, grid_l
       ggplot2::xlab("Treatment thresholds") + ggplot2::ylab("Conditional average outcome")
 
     # From m to tau
-    #tau_hat <- matrix(0, nrow = nrow(mu_hat)/2 - 1)
-    #std_tau_hat <- matrix(0, nrow = nrow(mu_hat)/2 - 1)
-    #k <- 1
-    #for (i in seq(0, 1-grid_length, by= grid_length)) {
-    #  MTE_transform <- moment_transformation(i, i + grid_length, mu_hat, Sigma_hat, eta)
-    #  tau_hat[k] <- MTE_transform$mean
-    #  std_tau_hat[k] <- (MTE_transform$variance)^(.5)
-    #  k <- k + 1
-    #}
-    # Calculate Weights
     eta_length <- nrow(mu_hat)/2
     w <- matrix(0, nrow = nrow(mu_hat)/2 - 1, ncol = nrow(mu_hat))
     for (i in seq(1,eta_length - 1,1)) {
@@ -675,7 +730,18 @@ bayesian_mte <- function(outcome, treatment_choice, treatment_assignment, grid_l
     param_results <- matrix(0, num, 12)
     MTE_results <- data.frame(matrix(0,num,nrow(eta)-1))
     for (k in seq(1, num)) {
-      treat_effects <- bayesian_mte_sub(c(ml_results[k,1], ml_results[k,2], ml_results[k,3], ml_results[k,4]) ,merged, eta, c_data, grid_length, frequentist_uncertainty = frequentist_uncertainty)
+      # Adjust Hyperparams
+      std_mu = exp(ml_results[k,1])
+      lengthscale_mu = exp(ml_results[k,2])
+      std_tau = exp(ml_results[k,3])
+      lengthscale_tau = exp(ml_results[k,4])
+      
+      # Calculate Kernels
+      Sigma_mu <- (std_mu)^2*exp(-distance(eta$eta)/(2*lengthscale_mu^2))
+      Sigma_tau <- (std_tau)^2*exp(-distance(eta$eta)/(2*lengthscale_tau^2))
+      
+      # Calculate Treatment
+      treat_effects <- bayesian_mte_sub(Sigma_mu, Sigma_tau, merged, eta, c_data, grid_length, frequentist_uncertainty = frequentist_uncertainty)
 
       # Results
       param_results[k,1] <- ml_results[k,1]
