@@ -1,12 +1,13 @@
 
+
 ################### Expanded Regression Discontinuity ##########################
 
 # Clear console.
 cat("\014")
 
 # Remove Plots
-dev.off(dev.list()["RStudioGD"]) # Apply dev.off() & dev.list()
-dev.off()
+#dev.off(dev.list()["RStudioGD"]) # Apply dev.off() & dev.list()
+#dev.off()
 
 # Remove all files from workspace - do this every time so we don't use a file archived to the workspace.
 rm(list = ls())
@@ -57,6 +58,7 @@ remove.packages("/Users/iopper/Desktop/BayesianMTEs-main/bayesianMTE")
 devtools::install("/Users/iopper/Desktop/BayesianMTEs-main/bayesianMTE")
 library("bayesianMTE")
 
+
 library(tidyr)
 
 ##############################################################
@@ -71,44 +73,18 @@ patterns <- read_dta("SampleData/OHIE_Public_Use_Files/OHIE_Data/oregonhie_patte
 data <- merge(descriptive_vars, stprograms_data)
 data <- merge(data, patterns)
 
+# 10x the Sample Size
+#data <- rbind(data, data, data, data, data, data, data, data, data, data)
+#set.seed(1215)
+#data <- sample_n(data, 1709, replace = TRUE)
+
+
 ##############################################################
-# Run Code
+# Bayesian MTEs 
 ##############################################################
-# Empirical Bayes Approach
-estimates_eb <- bayesianMTE::bayesian_mte(data$any_visit_180p_180, data$ohp_all_ever_matchn_30sep2009, data$treatment, full_bayes = FALSE)
-
-# Output Graphs
-ggsave("/Users/iopper/Dropbox/Research Papers/FromLATEtoATE/Figures/UnconditionalRandomFunctions.pdf", estimates_eb$prior_plot, width = 5, height = 6, dpi = 300)
-ggsave("/Users/iopper/Dropbox/Research Papers/FromLATEtoATE/Figures/ConditionalRandomFunctions.pdf", estimates_eb$posterior_plot, width = 5, height = 6, dpi = 300)
-ggsave("/Users/iopper/Dropbox/Research Papers/FromLATEtoATE/Figures/PosteriorMomentFunctions.pdf", estimates_eb$predictions_plot, width = 5, height = 6, dpi = 300)
-ggsave("/Users/iopper/Dropbox/Research Papers/FromLATEtoATE/Figures/MTEPosterior.pdf", estimates_eb$MTE_plot, width = 5, height = 6, dpi = 300)
-
-ggsave("/Users/iopper/Dropbox/Research Papers/FromLATEtoATE/Figures/ATE_prior_posterior.pdf", estimates_eb$ATE$graph, width = 5, height = 5, dpi = 300)
-ggsave("/Users/iopper/Dropbox/Research Papers/FromLATEtoATE/Figures/LATE_prior_posterior.pdf", estimates_eb$LATE$graph, width = 5, height = 5, dpi = 300)
-ggsave("/Users/iopper/Dropbox/Research Papers/FromLATEtoATE/Figures/ATATE_prior_posterior.pdf", estimates_eb$ATATE$graph, width = 5, height = 5, dpi = 300)
-ggsave("/Users/iopper/Dropbox/Research Papers/FromLATEtoATE/Figures/NTATE_prior_posterior.pdf", estimates_eb$NTATE$graph, width = 5, height = 5, dpi = 300)
-
 # Full Bayes
 library(patchwork)
 estimates <- bayesianMTE::bayesian_mte(data$any_visit_180p_180, data$ohp_all_ever_matchn_30sep2009, data$treatment, full_bayes = TRUE)
-
-##############################################################
-# Statistical vs Extrapolation
-##############################################################
-# Full Sample
-estimates_freq <- bayesianMTE::bayesian_mte(data$any_visit_180p_180, data$ohp_all_ever_matchn_30sep2009, data$treatment, full_bayes = FALSE, frequentist_uncertainty = TRUE, input_hypers = estimates_eb$hypers)
-estimates_extrap <- bayesianMTE::bayesian_mte(data$any_visit_180p_180, data$ohp_all_ever_matchn_30sep2009, data$treatment, full_bayes = FALSE, extrapolation_uncertainty = TRUE, input_hypers = estimates_eb$hypers)
-
-# Output Graphs
-ggsave("/Users/iopper/Dropbox/Research Papers/FromLATEtoATE/Figures/PosteriorMomentFunctions_ExtrapOnly.pdf", estimates_extrap$predictions_plot, width = 5, height = 6, dpi = 300)
-ggsave("/Users/iopper/Dropbox/Research Papers/FromLATEtoATE/Figures/MTEPosterior_ExtrapOnly.pdf", estimates_extrap$MTE_plot, width = 5, height = 6, dpi = 300)
-
-
-# N = 1,000
-sampled_data <- sample_n(data, 1000, replace = TRUE)
-estimates_freq <- bayesianMTE::bayesian_mte(sampled_data$any_visit_180p_180, sampled_data$ohp_all_ever_matchn_30sep2009, sampled_data$treatment, full_bayes = FALSE, frequentist_uncertainty = TRUE, input_hypers = estimates_eb$hypers)
-estimates_extrap <- bayesianMTE::bayesian_mte(sampled_data$any_visit_180p_180, sampled_data$ohp_all_ever_matchn_30sep2009, sampled_data$treatment, full_bayes = FALSE, extrapolation_uncertainty = TRUE, input_hypers = estimates_eb$hypers)
-
 
 ##############################################################
 # Bayesian MTEs vs. Linear Extrapolation vs. Heckit
@@ -126,7 +102,7 @@ lower_cut <- first_stage$coefficients[1]
 upper_cut <- first_stage$coefficients[1] + first_stage$coefficients[2]
 
 # Calculate Threshold Values for Linear Model 
-  #--> Assumes J(u) = u - .5
+#--> Assumes J(u) = u - .5
 treat_lower <- (lower_cut - 1)/2
 treat_upper <- (upper_cut - 1)/2
 control_lower <- lower_cut/2
@@ -182,13 +158,28 @@ MTEs <- all_MTEs %>% pivot_longer(cols = -eta,   names_to = c(".value", "estimat
 MTEs <- MTEs %>% mutate(q5 = tau_hat - 1.96*std_tau_hat, q95 = tau_hat + 1.96*std_tau_hat)
 
 MTE_estimates <- ggplot(MTEs, aes(x = eta, y = tau_hat, color = estimate)) +
-  geom_line() +
-  geom_line(aes(y = q5), linetype = "dashed") +
-  geom_line(aes(y = q95), linetype = "dashed") +
+  geom_line(size = 1.5) +
+  geom_line(aes(y = q5), linetype = "dashed", size = 1.5) +
+  geom_line(aes(y = q95), linetype = "dashed", size = 1.5) +
   labs(color = "Estimation Approach") + 
   ggplot2::xlab(expression(eta)) + ggplot2::ylab("Conditional average treatment effect") +
-  scale_color_manual(values = c("bayesianMTE" = "blue", "heckit" = "red", "linear_extrap" = "green"),
-                   labels = c("Bayesian MTEs", "Heckit", "Linear Extrapolation")) +
+  scale_color_manual(values = c("bayesianMTE" = "blue", "heckit" = "red", "linear_extrap" = "#006400"),
+                     labels = c("Bayesian MTEs", "Heckit", "Linear Extrapolation")) +
   theme_minimal()
 ggsave("/Users/iopper/Dropbox/Research Papers/FromLATEtoATE/Figures/MTEEstimates.pdf", MTE_estimates, width = 5, height = 6, dpi = 300)
+
+
+
+##############################################################
+# Latex Table
+##############################################################
+tab <- paste(
+sprintf("Avg. Treat Effect (ATE) & %.3f & %.3f & %.3f & %.3f & %.3f & %.3f \\", estimates$ATE$mean, estimates$ATE$variance^.5, ATE_linear[1], ATE_linear[2], ATE_heckit[1], ATE_heckit[2]),
+sprintf("Always Taker ATE (ATATE) & %.3f & %.3f & %.3f & %.3f & %.3f & %.3f \\", estimates$ATATE$mean, estimates$ATATE$variance^.5, ATATE_linear[1], ATATE_linear[2], ATATE_heckit[1], ATATE_heckit[2]),
+sprintf("Local ATE (LATE) & %.3f & %.3f & %.3f & %.3f & %.3f & %.3f \\", estimates$LATE$mean, estimates$LATE$variance^.5, LATE_linear[1], LATE_linear[2], LATE_heckit[1], LATE_heckit[2]),
+sprintf("Never Taker ATE (NTATE) & %.3f & %.3f & %.3f & %.3f & %.3f & %.3f \\", estimates$NTATE$mean, estimates$NTATE$variance^.5, NTATE_linear[1], NTATE_linear[2], NTATE_heckit[1], NTATE_heckit[2])
+)
+
+c(tab)
+
 
